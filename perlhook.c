@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <fcntl.h>
 #include <EXTERN.h>               /* from the Perl distribution     */
 #include <perl.h>                 /* from the Perl distribution     */
 #include <XSUB.h>
@@ -13,16 +12,15 @@
 #include <netinet/ip_icmp.h>
 
 extern short modified;
-extern FILE* LOG;
 
 static PerlInterpreter	*my_perl;  /***    The Perl interpreter    ***/
 /*struct hv		*h = NULL;*/
 struct ip		*cur_ip;	// current IP header
 union {
-  void			*ip_end;	// end of IP header (start of next hdr)
-  struct tcphdr		*tcp;
-  struct udphdr		*udp;
-} cur;
+  void			*cur_ip_end;	// end of IP header (start of next hdr)
+  struct tcphdr		*cur_tcp;
+  struct udphdr		*cur_udp;
+}
 // prototypes of utility functions
 void pu_make_hdr(void);
 void pu_update_hdr(void);
@@ -35,7 +33,7 @@ void pu_update_hdr(void);
 #endif
 // -------------------------------------------------------------------
 // ph_get_body(): return body of the current packet in string
-EXTERN_C void ph_get_body(pTHX_ CV* cv) {
+EXTERN_C void ph_get_body(pTHX_ CV* cv){
   short ofs;
   dXSARGS;
 #ifdef WITH_PERL56
@@ -49,7 +47,7 @@ EXTERN_C void ph_get_body(pTHX_ CV* cv) {
 #endif
   switch (cur_ip->ip_p) {
     case IPPROTO_TCP:
-      ofs = (cur_ip->ip_hl<<2) + (cur.tcp->th_off<<2);
+      ofs = (cur_ip->ip_hl<<2) + (cur_tcp->th_off<<2);
       break;
     default:
       ofs = (cur_ip->ip_hl<<2);
@@ -59,7 +57,13 @@ EXTERN_C void ph_get_body(pTHX_ CV* cv) {
 }
 // -------------------------------------------------------------------
 // ph_update_hdr(): update header from %pkt hash values
-EXTERN_C void ph_update_hdr(pTHX_ CV* cv) {
+EXTERN_C void ph_update_hdr(pTHX_ CV* cv){
+  struct hv *h;
+  struct sv *s;
+  short ofs;
+  STRLEN len;
+  char  *buf;
+  struct in_addr addr;
   dXSARGS;
 #ifdef WITH_PERL56
   dXSTARG;
@@ -70,7 +74,7 @@ EXTERN_C void ph_update_hdr(pTHX_ CV* cv) {
   XSRETURN(0);
 }
 // -------------------------------------------------------------------
-EXTERN_C void  xs_init(pTHX) {
+EXTERN_C voidxs_init(pTHX){
   char *file = __FILE__;
   newXS("get_body", ph_get_body, file);
   newXS("update_hdr", ph_update_hdr, file);
@@ -90,19 +94,19 @@ void pu_make_hdr(void) {
 
   h = perl_get_hv("pkt", TRUE);
   if (h != NULL) {
-    hv_store(h, "src", 3, newSVpv(inet_ntoa(cur_ip->ip_src), 0), 0);
-    hv_store(h, "dst", 3, newSVpv(inet_ntoa(cur_ip->ip_dst), 0), 0);
-    hv_store(h, "p", 1, newSViv(cur_ip->ip_p), 0);
-    hv_store(h, "len", 3, newSViv( ntohs(cur_ip->ip_len) ), 0);
-    hv_store(h, "tos", 3, newSViv(cur_ip->ip_tos), 0);
-    hv_store(h, "id", 2, newSViv( ntohs(cur_ip->ip_id) ), 0);
-    hv_store(h, "ttl", 3, newSViv(cur_ip->ip_ttl), 0);
-    switch (cur_ip->ip_p) {
+    hv_store(h, "src", 3, newSVpv(inet_ntoa(ip->ip_src), 0), 0);
+    hv_store(h, "dst", 3, newSVpv(inet_ntoa(ip->ip_dst), 0), 0);
+    hv_store(h, "p", 1, newSViv(ip->ip_p), 0);
+    hv_store(h, "len", 3, newSViv( ntohs(ip->ip_len) ), 0);
+    hv_store(h, "tos", 3, newSViv(ip->ip_tos), 0);
+    hv_store(h, "id", 2, newSViv( ntohs(ip->ip_id) ), 0);
+    hv_store(h, "ttl", 3, newSViv(ip->ip_ttl), 0);
+    switch (ip->ip_p) {
       case IPPROTO_TCP:
-        hv_store(h, "sport", 5, newSViv( ntohs(cur.tcp->th_sport) ), 0);
-        hv_store(h, "dport", 5, newSViv( ntohs(cur.tcp->th_dport) ), 0);
-        hv_store(h, "flags", 5, newSViv(cur.tcp->th_flags), 0);
-	hv_store(h, "off", 3, newSViv(cur.tcp->th_off), 0);
+        hv_store(h, "sport", 5, newSViv( ntohs(cur_tcp->th_sport) ), 0);
+        hv_store(h, "dport", 5, newSViv( ntohs(cur_tcp->th_dport) ), 0);
+        hv_store(h, "flags", 5, newSViv(cur_tcp->th_flags), 0);
+	hv_store(h, "off", 3, newSViv(cur_tcp->th_off), 0);
         break;
     }
   }
@@ -111,11 +115,6 @@ void pu_make_hdr(void) {
 // pu_update_hdr(): updates current packet header with %pkt values
 void pu_update_hdr(void) {
   struct hv		*h;
-  struct sv		*s;
-  short 		ofs;
-  STRLEN 		len;
-  char  		*buf;
-  struct in_addr 	addr;
 
   h = perl_get_hv("pkt", FALSE);
   if (h != NULL) {
@@ -129,9 +128,9 @@ void pu_update_hdr(void) {
     switch (cur_ip->ip_p) {
       case IPPROTO_TCP:
         if ( (s = *hv_fetch(h, "sport", 5, 0)) != NULL )
-	  cur.tcp->th_sport = htons(SvIV(s));
+	  cur_tcp->th_sport = htons(SvIV(s));
         if ( (s = *hv_fetch(h, "dport", 5, 0)) != NULL )
-	  cur.tcp->th_dport = htons(SvIV(s));
+	  cur_tcp->th_dport = htons(SvIV(s));
 	break;
     }
   }
@@ -140,20 +139,19 @@ void pu_update_hdr(void) {
 // -------------------------------------------------------------------
 void perl_exec(struct ip *ip) {
   cur_ip = ip;
-  cur.ip_end = ((char*)ip + (ip->ip_hl<<2));
+  cur_ip_end = ((char*)ip + (ip->ip_hl<<2));
 /*
-  cur.tcp = NULL;
+  cur_tcp = NULL;
   switch (ip->ip_p) {
     case IPPROTO_TCP:
-      cur.tcp = (struct tcphdr*) ((char*)ip + (ip->ip_hl<<2));
+      cur_tcp = (struct tcphdr*) ((char*)ip + (ip->ip_hl<<2));
       break;
   }
 */
-  pu_make_hdr();
   perl_run(my_perl);
 }
 // -------------------------------------------------------------------
-int perl_init(char *name) {
+int perl_init(char *name){
   struct { char pv; char *pn; }
     protos[] = {
       { IPPROTO_ICMP, "ICMP" },
@@ -169,13 +167,13 @@ int perl_init(char *name) {
   if (my_perl == NULL) return 0;
   perl_construct(my_perl);
   i = perl_parse(my_perl, xs_init, 2, args, (char **)NULL);
-  if (i != 0) return 0;
+  if (!i) return 0;
   // create global variables
   h1 = perl_get_hv("PROTO", TRUE); SvREADONLY(h1);
   for (i = 0; i < 4; i++) {
-    if ( (sv = perl_get_sv(protos[i].pn, TRUE)) != NULL ) { 
+    if ( (sv = get_sv(protos[i].pn, TRUE)) != NULL ) { 
       sv_setiv(sv, protos[i].pv); SvREADONLY_on(sv);
-      hv_store(h1, protos[i].pn, strlen(protos[i].pn), sv, 0);
+      hv_store(h1, protos[i].pn, sv, 0);
       SvREFCNT_inc(sv);
     }
   }
@@ -185,21 +183,6 @@ int perl_init(char *name) {
     "%PROTO = ($ICMP=>'ICMP', $IGMP=>'IGMP', $TCP=>'TCP', $UDP=>'UDP');"
     ,1); */
   return 1;
-}
-
-void perl_initlogs() {
-struct gv *gv;
-struct io *io;
-  // redirect stdout
-  if (LOG != NULL) {
-    gv = gv_fetchpv("STDOUT", TRUE, SVt_PVIO);
-    io = GvIOn(gv);
-    IoOFP(io) = IoIFP(io) = PerlIO_importFILE(LOG, 0);
-#ifndef WITH_PERL56
-#  define IoTYPE_WRONLY O_WRONLY
-#endif
-    IoTYPE(io) = IoTYPE_WRONLY;
-  }
 }
 // -------------------------------------------------------------------
 void perl_done() {

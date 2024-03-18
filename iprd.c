@@ -60,7 +60,7 @@ extern void perl_done();
 int dprintf(char const *fmt, ...) {
   int			ret = 0;
   va_list		ap;
-  char			buf[20];
+  char			buf[16];
   time_t		ct;
 
   if (!verbose) return 0;
@@ -188,9 +188,6 @@ int main(int argc, char *argv[]) {
     fprintf(PID, "%d\n", getpid());
     fclose(PID);
   }
-#ifdef WITH_PERL
-  perl_initlogs();
-#endif
   // create a socket
   sock = socket(PF_INET, SOCK_RAW, IPPROTO_DIVERT);
   if (sock < 0) {
