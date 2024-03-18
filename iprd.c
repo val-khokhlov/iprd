@@ -258,6 +258,8 @@ void do_rewrite(struct ip *ip) {
   modified = 0;
   src_ip = inet_addr("127.0.0.1");
   dst_ip = inet_addr("127.0.0.1");
+  if (ip->ip_p == IPPROTO_TCP)
+    tcphdr = (struct tcphdr*) ((char*)ip + (ip->ip_hl<<2));
 #if 0
   if ( /*(ip->ip_src.s_addr == src_ip) && (ip->ip_dst.s_addr == dst_ip)*/ 1) {
     if (ip->ip_p == IPPROTO_TCP) {
@@ -282,14 +284,18 @@ void do_rewrite(struct ip *ip) {
     }
   }
 #endif
+#ifdef WITH_PERL
   perl_exec(ip);
+#endif
       // update checksums if modified
       if (modified) {
         i = ntohs(ip->ip_sum) + ntohs(in_cksum_hdr(ip));
 	ip->ip_sum = htons( i > 0xffff ? ++i - 0x10000 : i );
 	// some strange stuff w/tcp cksum: need to add carry flag?
-	i = ntohs(tcphdr->th_sum) + ntohs(tcp_cksum(ip, tcphdr, ip->ip_len));
-	tcphdr->th_sum = htons( i > 0xffff ? ++i - 0x10000 : i );
+        if (ip->ip_p == IPPROTO_TCP) {
+	  i = ntohs(tcphdr->th_sum) + ntohs(tcp_cksum(ip, tcphdr, ip->ip_len));
+	  tcphdr->th_sum = htons( i > 0xffff ? ++i - 0x10000 : i );
+        }      
       }
 }
 // ====================================================================
