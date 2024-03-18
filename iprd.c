@@ -22,7 +22,7 @@
 
 #include <machine/in_cksum.h>
 
-#define	VERSION	"iprd: IP rewrite daemon ver.0.01a, Copyright (C) val khokhlov, 2002"
+#define	VERSION	"iprd: IP rewrite daemon ver.0.02a, Copyright (C) val khokhlov, 2002"
 #define USAGE	"Usage: iprd [-f perl_file] [-d] [-l log_file] [-p pid_file] [-h] [-v]"
 
 int 			sock;			// in/out socket
@@ -60,7 +60,7 @@ extern void perl_done();
 int dprintf(char const *fmt, ...) {
   int			ret = 0;
   va_list		ap;
-  char			buf[16];
+  char			buf[20];
   time_t		ct;
 
   if (!verbose) return 0;
@@ -188,6 +188,9 @@ int main(int argc, char *argv[]) {
     fprintf(PID, "%d\n", getpid());
     fclose(PID);
   }
+#ifdef WITH_PERL
+  perl_initlogs();
+#endif
   // create a socket
   sock = socket(PF_INET, SOCK_RAW, IPPROTO_DIVERT);
   if (sock < 0) {
